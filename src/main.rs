@@ -1,10 +1,15 @@
-use axum::{routing::{get, post}, http::StatusCode, Json, Router};
+use axum::{routing::{get, post, delete, put}, http::StatusCode, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc};
+use std::convert::Infallible;
+use std::time::SystemTime;
 use sqlx::{FromRow, Pool, Postgres, Row};
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use rust_todo::run;
-use axum::extract::State;
+use axum::extract::{Path, State};
+use axum::response::IntoResponse;
+use chrono::{DateTime, NaiveDateTime, Utc};
+use postgres::types::{Date, Timestamp};
 
 #[derive(Clone)]
 struct AppState {
@@ -51,11 +56,23 @@ async fn main() {
   // build our application with a route
   let app = Router::new()
     .route("/", get(root))
-    .route("/todo", post({
+    .route("/api/v1/todo", post({
       let shared_state = shared_state.clone();
       move |body| create_todo(body, shared_state.clone())
     }))
-    .route("/todo", get(get_todos))
+    .route("/api/v1/todo", get(get_todos))
+    .route("/api/v1/todo/:id", get({
+      let shared_state = shared_state.clone();
+      move |id| get_todo(id, shared_state.clone())
+    }))
+    .route("/api/v1/todo/:id", put({
+      let shared_state = shared_state.clone();
+      move |body| update_todo(body, shared_state.clone())
+    }))
+    .route("/api/v1/todo/:id", delete({
+      let shared_state = shared_state.clone();
+      move |id| delete_todo(id, shared_state.clone())
+    }))
     .with_state(shared_state);
 
   let listener = tokio::net::TcpListener::bind(format!("{}:{}", {ip}, {port})).await.unwrap();
@@ -75,25 +92,82 @@ async fn root() -> &'static str {
 async fn create_todo(
   Json(payload): Json<CreateTodoDTO>,
   state: Arc<AppState>,
-) -> (StatusCode, String) {
-  let mut conn = state.pool.acquire().await.unwrap();
-  let todo = sqlx::query_as::<_, Todo>("INSERT INTO todo (title) VALUES ($1) RETURNING id, title")
+) -> StatusCode {
+  let status = payload.status.unwrap_or("todo".to_string());
+  let description = payload.description.unwrap_or("".to_string());
+
+
+  let _ = sqlx::query("INSERT INTO todo (title, status, description, user_id) VALUES ($1, $2, $3, $4)")
     .bind(&payload.title)
-    .fetch_one(&mut *conn)
+    .bind(status)
+    .bind(description)
+    .bind(&payload.user_id)
+    .execute(&state.pool)
     .await
-    .map_err(internal_error)
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
     .unwrap();
-  (StatusCode::CREATED, format!("Created todo with id: {}, title: {}", todo.id, todo.title))
+
+  StatusCode::CREATED
 }
 
 async fn get_todos(
   State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<Todo>>, (StatusCode, String)> {
-  let todos = sqlx::query_as::<_, Todo>("SELECT id, title FROM todo")
+  let todos = sqlx::query_as::<_, Todo>("SELECT * FROM todo")
     .fetch_all(&state.pool)
     .await
     .map_err(internal_error)?;
   Ok(Json(todos))
+}
+
+async fn get_todo(
+  Path(id): Path<i32>,
+  state: Arc<AppState>,
+) -> Result<Json<Todo>, (StatusCode, String)> {
+  let result = sqlx::query_as::<_, Todo>("SELECT id, title, status, description, user_id, created_at, updated_at FROM todo WHERE id = $1")
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+  match result {
+    Some(todo) => {
+      println!("{:?}", todo);
+      Ok(Json(todo))
+    },
+    None => Err((StatusCode::NOT_FOUND, "Задача не найдена".to_string())),
+  }
+}
+
+async fn update_todo(
+  Json(payload): Json<UpdateTodoDTO>,
+  state: Arc<AppState>,
+) -> (StatusCode, String) {
+  let todo =  sqlx::query_as::<_, Todo>("UPDATE todo SET title = $1, status = $2, description = $3 WHERE id = $4 RETURNING id, title")
+    .bind(&payload.title)
+    .bind(&payload.status)
+    .bind(&payload.description)
+    .bind(&payload.id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(internal_error)
+    .unwrap();
+
+  (StatusCode::OK, format!("Created todo with id: {}, title: {}", todo.id, todo.title))
+}
+
+async fn delete_todo(
+  Path(id): Path<i32>,
+  state: Arc<AppState>,
+) -> Result<impl IntoResponse, Infallible> {
+  let todo = sqlx::query_as::<_, Todo>("DELETE FROM todo WHERE id = $1 RETURNING id, title")
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Error fetching todo".to_string()))
+    .unwrap();
+
+  Ok(Json(todo))
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
@@ -103,24 +177,44 @@ fn internal_error<E>(err: E) -> (StatusCode, String)
   (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
-// the input to our `create_todo` handler
 #[derive(Deserialize, Debug)]
 struct CreateTodoDTO {
   title: String,
+  status: Option<String>,
+  description: Option<String>,
+  user_id: String,
 }
 
-// the output to our `create_todo` handler
-#[derive(Serialize)]
-struct Todo {
+#[derive(Deserialize, Debug)]
+struct UpdateTodoDTO {
   id: i32,
   title: String,
+  status: String,
+  description: String,
 }
 
-impl FromRow<'_,PgRow> for Todo {
+
+#[derive(Serialize, Debug)]
+pub struct Todo {
+  id: i32,
+  title: String,
+  status: String,
+  description: String,
+  user_id: String,
+  created_at: i32,
+  updated_at: i32,
+}
+
+impl FromRow<'_, PgRow> for Todo {
   fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
     Ok(Self {
       id: row.try_get("id")?,
       title: row.try_get("title")?,
+      status: row.try_get("status")?,
+      description: row.try_get("description")?,
+      user_id: row.try_get("user_id")?,
+      created_at: row.try_get("created_at")?,
+      updated_at: row.try_get("updated_at")?,
     })
   }
 }

@@ -8,12 +8,13 @@ edition = "2021"
 [dependencies]
 axum = "0.7.4"
 dotenv = "0.15.0"
-postgres = "0.19.7"
+postgres = { version = "0.19.7", features = ["with-chrono-0_4"] }
 serde = { version = "1.0.197", features = ["derive"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "runtime-tokio-rustls", "json", "time"] }
 tokio = { version = "1.4.0", features = ["rt", "rt-multi-thread", "macros"] }
 tracing-subscriber = "0.3.18"
 uuid = { version = "1.8.0", features = ["v4"] }
+chrono = { version = "0.4.*", features = ["serde"] }
 
 [profile.release]
 strip = true
