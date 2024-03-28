@@ -2,14 +2,12 @@ use axum::{routing::{get, post, delete, put}, http::StatusCode, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc};
 use std::convert::Infallible;
-use std::time::SystemTime;
-use sqlx::{FromRow, Pool, Postgres, Row};
-use sqlx::postgres::{PgPoolOptions, PgRow};
+use sqlx::{Pool, Postgres};
+use sqlx::postgres::{PgPoolOptions};
 use rust_todo::run;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use postgres::types::{Date, Timestamp};
+use chrono::{NaiveDateTime};
 
 #[derive(Clone)]
 struct AppState {
@@ -193,28 +191,13 @@ struct UpdateTodoDTO {
   description: String,
 }
 
-
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, sqlx::FromRow)]
 pub struct Todo {
   id: i32,
   title: String,
   status: String,
   description: String,
   user_id: String,
-  created_at: i32,
-  updated_at: i32,
-}
-
-impl FromRow<'_, PgRow> for Todo {
-  fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
-    Ok(Self {
-      id: row.try_get("id")?,
-      title: row.try_get("title")?,
-      status: row.try_get("status")?,
-      description: row.try_get("description")?,
-      user_id: row.try_get("user_id")?,
-      created_at: row.try_get("created_at")?,
-      updated_at: row.try_get("updated_at")?,
-    })
-  }
+  created_at: NaiveDateTime,
+  updated_at: NaiveDateTime,
 }

@@ -7,8 +7,8 @@ CREATE TABLE todo (
   title         TEXT NOT NULL,
   description   TEXT,
   user_id       TEXT  NOT NULL,
-  created_at    timestamptz DEFAULT now(),
-  updated_at    timestamptz DEFAULT now()
+  created_at    TIMESTAMP DEFAULT now(),
+  updated_at    TIMESTAMP DEFAULT now()
 );
 
 COMMIT;
