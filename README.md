@@ -6,7 +6,7 @@
 cargo add sqlx -F postgres
 ```
 
-**add new migration
+**add new migration**
 ```
 sqlx migrate add -r <name>
 ```
